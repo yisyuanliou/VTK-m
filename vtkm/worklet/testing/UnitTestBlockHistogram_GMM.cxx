@@ -53,9 +53,12 @@ const int maxKMeanppIterations = 100;
 const int vdims[3] = { 500, 500, 100 };
 const vtkm::Id numberOfBins = 10;
 const vtkm::Float32 fieldMinValue = -4900;
-const vtkm::Float32 fieldMaxValue = 2600;
+const vtkm::Float32 fieldMaxValue = 200;
 //vtkm::Range range;
 vtkm::Float32 delta;
+int currentGMMId = -1;
+int BinsToGMMId[300] = {};
+//int GMMIdToBins[300] = {};
 
 void Index1DTo3D( int idx, int& x, int& y, int& z , const int Size)
 {
@@ -101,12 +104,9 @@ void makeDataset(const int *vdims, vtkm::Float32 *data, char *filepath)
 		}
 	}
 }
-vtkm::Int32 findGMMId(vtkm::cont::ArrayHandle<vtkm::Id> bins,
-	vtkm::Id numberOfBins,
-	vtkm::Float32 Minvalue,
+vtkm::Int32 findGMMId(vtkm::Id numberOfBins, vtkm::Float32 Minvalue,
 	vtkm::Float32 delta, vtkm::Float32 value, int blkCnt)
 {
-	vtkm::cont::ArrayHandle<vtkm::Id>::ReadPortalType binPortal = bins.ReadPortal();
 	for (vtkm::Id i = 0; i < numberOfBins; i++)
 	{
 		vtkm::Float64 lo = Minvalue + (static_cast<vtkm::Float64>(i) * delta);
@@ -118,6 +118,20 @@ vtkm::Int32 findGMMId(vtkm::cont::ArrayHandle<vtkm::Id> bins,
 	}
 	return -1;
 }
+int BinsCntBlocks(vtkm::cont::ArrayHandle<vtkm::Id> bins, vtkm::Id numberOfBins)
+{
+	int BlkCnt = 0;
+	vtkm::cont::ArrayHandle<vtkm::Id>::ReadPortalType binPortal = bins.ReadPortal();
+	for (vtkm::Id i = 0; i < numberOfBins; i++)
+	{
+		if (binPortal.Get(i) > 0)
+		{
+			BlkCnt += 1;
+		}
+	}
+	return BlkCnt;
+}
+
 void TestAyanGMM()
 {
 	std::string filePrefixPath = "./";
@@ -131,9 +145,16 @@ void TestAyanGMM()
 	vtkm::Float32 *gtData = (vtkm::Float32 *)malloc(BlockSize * sizeof(vtkm::Float32));
 	std::vector<vtkm::Id> TotalBins;
 
+	//BinsToGMMId initialize
+	for (int i = 0; i < numberOfBins*(BlockSize/CubeSize); ++i)
+	{
+		BinsToGMMId[i] = -1;
+	}
+
 	std::vector<vtkm::Vec<Real, VARs>> gmmTrainData; //******* all training data for all GMMs
 	std::vector<vtkm::Int32> gmmIds; //******** sample's coreesponding GMM ID
-	int gmmCnt = numberOfBins*(BlockSize/CubeSize); //*********** how many GMM we want to train
+	//int gmmCnt = numberOfBins*(BlockSize/CubeSize); //*********** how many GMM we want to train
+	int gmmCnt = 0; //*********** how many GMM we want to train
 
 	////////////////////  Step 1 ////////////////////////////////
 	/////create ground truth data (training data)
@@ -147,10 +168,11 @@ void TestAyanGMM()
 	}
 	//Write ground truth to raw binary file for visualization
 	std::ofstream fout(filePrefixPath + "gtData.bin", std::ios::out | std::ios::binary);
-	fout.write((char*)&gtData[0], CubeSize * sizeof(vtkm::Float32));
+	fout.write((char*)&gtData[0], BlockSize * sizeof(vtkm::Float32));
 	fout.close();
 	std::cout << "ground truth" << std::endl;
 
+	int Max = 0, Min = 99999;
 	for (int a = 0; a < SampleBlockSize / SampleCubeSize; ++a)
 	{
 		for (int b = 0; b < SampleBlockSize / SampleCubeSize; ++b)
@@ -158,6 +180,7 @@ void TestAyanGMM()
 			for (int c = 0; c < SampleBlockSize / SampleCubeSize; ++c)
 			{
 				/////create a 16*16 block data
+				//std::cout << "blockdata" << std::endl;
 				vtkm::Float32 *blockData = (vtkm::Float32 *)malloc(CubeSize * sizeof(vtkm::Float32));
 				for (int d0 = a * SampleCubeSize; d0 < (a + 1)*SampleCubeSize; d0++) {
 					for (int d1 = b * SampleCubeSize; d1 < (b + 1)* SampleCubeSize; d1++) {
@@ -168,9 +191,18 @@ void TestAyanGMM()
 							int z = d2 - c * SampleCubeSize;
 							int index = Index3DTo1D(x, y, z, SampleCubeSize);
 							blockData[index] = gtData[gtIndex];
+							if (gtData[gtIndex] > Max)
+							{
+								Max = gtData[gtIndex];
+							}
+							if (gtData[gtIndex] < Min)
+							{
+								Min = gtData[gtIndex];
+							}
 						}
 					}
 				}
+				//std::cout << "finish" << std::endl;
 				////////  Histogram  //////////
 				// Create the output bin array
 				vtkm::cont::ArrayHandle<vtkm::Id> bins;
@@ -184,8 +216,11 @@ void TestAyanGMM()
 				histogram.Run(p_data, numberOfBins, fieldMinValue, fieldMaxValue, delta, bins);
 				//histogram.Run(p_data, numberOfBins, range, delta, bins);
 
+				gmmCnt += BinsCntBlocks(bins, numberOfBins);
+				
 				TotalBins.insert(TotalBins.end(), vtkm::cont::ArrayPortalToIteratorBegin(bins.GetPortalConstControl()),
 					vtkm::cont::ArrayPortalToIteratorEnd(bins.GetPortalConstControl()));
+				//std::cout << "histogram" << std::endl;
 
 				////////////////////// Step 2: data to gmm training format ///////////////////////////////////////
 				///// from blockData to GMM traiing format
@@ -195,23 +230,31 @@ void TestAyanGMM()
 							vtkm::Vec<Real, VARs> sample;
 							sample[0] = d0; sample[1] = d1; sample[2] = d2;
 							gmmTrainData.push_back(sample);
-							int bkIndex = Index3DTo1D(d0, d1, d2, SampleBlockSize);
+							int x = d0 - a * SampleCubeSize;
+							int y = d1 - b * SampleCubeSize;
+							int z = d2 - c * SampleCubeSize;
+							int bkIndex = Index3DTo1D(x, y, z, SampleCubeSize);
 							int blkCnt = Index3DTo1D(a, b, c, SampleBlockSize / SampleCubeSize);
-							int gmmId = findGMMId(bins, numberOfBins, fieldMinValue, delta, blockData[bkIndex], blkCnt);
-							gmmIds.push_back(gmmId);
+							int binsId = findGMMId(numberOfBins, fieldMinValue, delta, blockData[bkIndex], blkCnt);
+
+							if (BinsToGMMId[binsId] == -1)
+							{
+								currentGMMId += 1;
+								BinsToGMMId[binsId] = currentGMMId;
+								gmmIds.push_back(currentGMMId);
+							}
+							else
+							{
+								gmmIds.push_back(BinsToGMMId[binsId]);
+							}
 						}
 					}
 				}
-				//for (int i = 0; i < numberOfBins; ++i)
-				//{
-				//	if (bins.GetPortalConstControl().Get(i) > 0)
-				//	{
-				//		gmmCnt += 1;
-				//	}
-				//}
 			}
 		}
 	}
+	std::cout << currentGMMId << " ";
+	std::cout << "Max: " << Max << " Min: " << Min << std::endl;
 	// Normalize Histogram data
 	vtkm::cont::ArrayHandle<vtkm::Float32> Hbins;
 	Hbins.Allocate(TotalBins.size());
@@ -221,33 +264,6 @@ void TestAyanGMM()
 		vtkm::Float32 value = (vtkm::Float32)TotalBins[i] / (vtkm::Float32)CubeSize;
 		Hbins.GetPortalControl().Set(i, value);
 	}
-	std::cout << "histogram" << std::endl;
-	/*
-	////////////////////// Step 2: data to gmm training format ///////////////////////////////////////
-	///// from gtData to GMM traiing format
-	std::vector<vtkm::Vec<Real,VARs>> gmmTrainData; //******* all training data for all GMMs
-	std::vector<vtkm::Int32> gmmIds; //******** sample's coreesponding GMM ID
-	int gmmCnt = 0; //*********** how many GMM we want to train
-	int cnt[10] = {};
-	for(int i=0; i< BlockSize; i++ ){
-		int x, y, z;
-		Index1DTo3D(i, x, y, z, SampleBlockSize);
-		vtkm::Vec<Real, VARs> sample;
-		sample[0] = x; sample[1] = y; sample[2] = z;
-		gmmTrainData.push_back(sample);
-		int gmmId = findGMMId(TotalBins, numberOfBins, fieldMinValue, delta, gtData[i]);
-		gmmIds.push_back(gmmId);
-		cnt[gmmId] += 1;
-	}
-
-	for (int i = 0; i < numberOfBins; ++i)
-	{
-		if (cnt[i] > 0)
-		{
-			gmmCnt += 1;
-		}
-	}
-	*/
 	std::cout << "cnt: " << gmmCnt << std::endl;
 
 	vtkm::cont::ArrayHandle < vtkm::Int32 > keys = vtkm::cont::make_ArrayHandle(gmmIds);
@@ -304,6 +320,7 @@ void TestAyanGMM()
 	//////////////////////// Step 6 : reconstruction /////////////////////////////////
 	vtkm::cont::ArrayHandle<vtkm::Float32> ValueHandle;
 	ValueHandle.Allocate(BlockSize);
+	int blkOrder = 0;
 	for (int a = 0; a < SampleBlockSize / SampleCubeSize; ++a)
 	{
 		for (int b = 0; b < SampleBlockSize / SampleCubeSize; ++b)
@@ -311,6 +328,7 @@ void TestAyanGMM()
 			for (int c = 0; c < SampleBlockSize / SampleCubeSize; ++c)
 			{
 				int blkCnt = Index3DTo1D(a, b, c, SampleBlockSize / SampleCubeSize);
+				std::cout << "block: " << blkCnt << std::endl;
 				
 				for (int d0 = a * SampleCubeSize; d0 < (a + 1)*SampleCubeSize; d0++) {
 					for (int d1 = b * SampleCubeSize; d1 < (b + 1)* SampleCubeSize; d1++) {
@@ -318,65 +336,49 @@ void TestAyanGMM()
 							std::vector<vtkm::Float64> R;
 							vtkm::Vec<Real, VARs> position;
 							position[0] = d0; position[1] = d1; position[2] = d2;
-							for (int bin = blkCnt*numberOfBins; bin < (blkCnt+1)*numberOfBins; ++bin)
+							vtkm::Float64 Rsum = 0;
+							for (int bin = 0; bin < numberOfBins; ++bin)
 							{
-								vtkm::Float64 GMMprob = rsp.gmmsHandle.GetPortalControl().Get(bin).getProbability(position);
-								R.push_back(GMMprob * Hbins.GetPortalControl().Get(bin));
+								if (BinsToGMMId[blkCnt*numberOfBins+bin] != -1)
+								{
+									vtkm::Float64 GMMprob = rsp.gmmsHandle.GetPortalControl().Get(BinsToGMMId[blkCnt*numberOfBins+bin]).getProbability(position);
+									vtkm::Float64 Rprob = GMMprob * Hbins.GetPortalControl().Get(blkOrder*numberOfBins+bin);
+									
+									R.push_back(Rprob);
+									Rsum += Rprob;
+								}
+								else
+								{
+									R.push_back(0);
+								}
+							}
+
+							//// Normalize /////
+							for (int bin = 0; bin < numberOfBins; ++bin)
+							{
+								R[bin] = R[bin]/Rsum;
 							}
 							//// resample /////
-							vtkm::cont::ArrayHandle<vtkm::Float64> Rbins = vtkm::cont::make_ArrayHandle(R);
-							vtkm::cont::ArrayHandle<vtkm::Float64> CDFbins;
-							vtkm::cont::Algorithm::ScanInclusive(Rbins, CDFbins);
-
-							std::vector<vtkm::Float64> number;
-							number.push_back(rand() % (numberOfBins - 1));
-							vtkm::cont::ArrayHandle<vtkm::Float64> value = vtkm::cont::make_ArrayHandle(number);
-							vtkm::cont::ArrayHandle<vtkm::Id> result;
-
-							vtkm::cont::Algorithm::LowerBounds(CDFbins, value, result);
-							int R_index = result.GetPortalConstControl().Get(0);
-							vtkm::Float64 lo = fieldMinValue + (static_cast<vtkm::Float64>(R_index) * delta);
+							float r = (rand() / (float)RAND_MAX);
+							float sampleSum = 0;
+							int b_index;
+							for(b_index =0; b_index < numberOfBins; ++b_index){
+								sampleSum += R[b_index];
+								if( sampleSum > r )break;
+							}
+							vtkm::Float64 lo = fieldMinValue + (static_cast<vtkm::Float64>(b_index) * delta);
 							vtkm::Float64 hi = lo + delta;
 							vtkm::Float64 average = (lo + hi) / 2;
-							int index = Index3DTo1D(d0, d1, d2, BlockSize);
+							int index = Index3DTo1D(d0, d1, d2, SampleBlockSize);
 							ValueHandle.GetPortalControl().Set(index, average);
 						}
 					}
 				}
+				blkOrder += 1;
 			}
 		}
 	}
-	/*
-	for (int i = 0; i < CubeSize; ++i)
-	{
-		if (i % 50000 == 0) std::cout << i << std::endl;
-		int x, y, z;
-		Index1DTo3D(i, x, y, z);
-		vtkm::Vec<Real, VARs> position;
-		position[0] = x; position[1] = y; position[2] = z;
-		for (int bin = 0; bin < numberOfBins; ++bin)
-		{
-			vtkm::Float64 GMMprob = rsp.gmmsHandle.GetPortalControl().Get(bin).getProbability(position);
-			R.push_back(GMMprob * Hbins.GetPortalControl().Get(bin));
-		}
-		//// resample /////
-		vtkm::cont::ArrayHandle<vtkm::Float64> Rbins = vtkm::cont::make_ArrayHandle(R);
-		vtkm::cont::ArrayHandle<vtkm::Float64> CDFbins;
-		vtkm::cont::Algorithm::ScanInclusive(Rbins, CDFbins);
 
-		std::vector<vtkm::Float64> number;
-		number.push_back(rand() % (numberOfBins-1));
-		vtkm::cont::ArrayHandle<vtkm::Float64> value = vtkm::cont::make_ArrayHandle(number);
-		vtkm::cont::ArrayHandle<vtkm::Id> result;
-
-		vtkm::cont::Algorithm::LowerBounds(CDFbins, value, result);
-		int R_index = result.GetPortalConstControl().Get(0);
-		vtkm::Float64 lo = fieldMinValue + (static_cast<vtkm::Float64>(R_index) * delta);
-		vtkm::Float64 hi = lo + delta;
-		vtkm::Float64 average = (lo + hi) / 2;
-		ValueHandle.GetPortalControl().Set(i, average);
-	}
-	*/
 	std::cout << "check" << std::endl;
 	std::cout << ValueHandle.GetPortalConstControl().GetNumberOfValues() << std::endl;
 	std::vector<vtkm::Float32> reSampleData(ValueHandle.GetPortalConstControl().GetNumberOfValues());
