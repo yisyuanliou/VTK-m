@@ -31,7 +31,9 @@
 #include <vtkm/cont/Timer.h>
 //#include <vtkm/worklet/VtkmTable.h>
 //#include <vtkm/worklet/VtkmSQL.h>
+#include <vtkm/worklet/WorkletMapField.h>
 #include <vtkm/cont/DataSet.h>
+#include <vtkm/cont/RuntimeDeviceTracker.h>
 #include <vtkm/cont/DataSetBuilderExplicit.h>
 #include <vtkm/cont/DataSetBuilderRectilinear.h>
 #include <vtkm/cont/DataSetBuilderUniform.h>
@@ -53,12 +55,85 @@ const int maxKMeanppIterations = 100;
 const int vdims[3] = { 500, 500, 100 };
 const vtkm::Id numberOfBins = 10;
 const vtkm::Float32 fieldMinValue = -4900;
-const vtkm::Float32 fieldMaxValue = 200;
+const vtkm::Float32 fieldMaxValue = 1100;
 //vtkm::Range range;
 vtkm::Float32 delta;
 int currentGMMId = -1;
-int BinsToGMMId[300] = {};
-//int GMMIdToBins[300] = {};
+int BinsToGMMId[28000] = {};
+
+class Sampling : public vtkm::worklet::WorkletMapField
+{
+public:
+	typedef void ControlSignature(FieldIn, FieldIn, FieldIn, FieldIn, FieldOut, WholeArrayIn, WholeArrayIn);
+	typedef void ExecutionSignature(_1, _2, _3, _4, _5, _6, _7);
+
+	VTKM_CONT
+		Sampling() {}
+
+	template<typename FreqPortalType, typename GmmPortalType>
+	VTKM_EXEC
+		void operator()(const vtkm::Vec<vtkm::Float32, 3> xyz,
+			const vtkm::Id &stIdx, const vtkm::Id &OrIdx, const vtkm::Float32 &rUniform,
+			vtkm::Float32 &sample, FreqPortalType &freqInPortal, GmmPortalType &gmmInPortal) const
+	{
+		vtkm::Float32 postProb[numberOfBins];
+		float postProbSum = 0.0f;
+		for (int k = 0; k < numberOfBins; k++) {
+			if (BinsToGMMId[stIdx*numberOfBins + k] != -1) {
+				//std::cout << "d " << BinsToGMMId[stIdx*numberOfBins + k] << std::endl;
+				vtkm::Float32 f = freqInPortal.Get(OrIdx*numberOfBins + k);
+				//std::cout << "f " << f << std::endl;
+				vtkm::Float32 Rprob = f * gmmInPortal.Get(BinsToGMMId[stIdx*numberOfBins + k]).getProbability(xyz);
+				//std::cout << "Rp " << Rprob << std::endl;
+				postProb[k] = Rprob;
+				postProbSum += postProb[k];
+			}
+			else {
+				postProb[k] = 0;
+			}
+		}
+		//// Normalize /////
+		for (int bin = 0; bin < numberOfBins; ++bin)
+		{
+			postProb[bin] = postProb[bin] / postProbSum;
+		}
+		//vtkm::Float32 r = postProbSum * rUniform;
+		int k;
+		vtkm::Float32 sum = 0;
+		for (k = 0; k < numberOfBins; k++) {
+			sum += postProb[k];
+			if (sum > rUniform)break;
+		}
+		if (k == numberOfBins) k--;
+		//sample = binInPortal.Get(stIdx + k);
+		vtkm::Float64 lo = fieldMinValue + (static_cast<vtkm::Float64>(k) * delta);
+		vtkm::Float64 hi = lo + delta;
+		vtkm::Float64 average = (lo + hi) / 2;
+		//std::cout << "s " << k << " " << average << std::endl;
+		sample = average;
+	}
+};
+
+class Convert2PointND : public vtkm::worklet::WorkletMapField
+{
+public:
+	typedef void ControlSignature(FieldIn, FieldIn, FieldIn, FieldOut);
+	typedef void ExecutionSignature(_1, _2, _3, _4);
+
+	VTKM_CONT
+		Convert2PointND() {}
+
+	VTKM_EXEC
+		void operator()(const vtkm::Id &x, const vtkm::Id &y, const vtkm::Id &z,
+			vtkm::Vec<vtkm::Float32, 3> &p3d) const
+	{
+		p3d[0] = x;
+		p3d[1] = y;
+		p3d[2] = z;
+	}
+};
+
+
 
 void Index1DTo3D( int idx, int& x, int& y, int& z , const int Size)
 {
@@ -137,7 +212,7 @@ void TestAyanGMM()
 	std::string filePrefixPath = "./";
 	vtkm::Id size = vdims[0] * vdims[1] * vdims[2];
 	vtkm::Float32 *Data = (vtkm::Float32 *)malloc(size * sizeof(vtkm::Float32));
-	char pf22file[200] = "pf22.bin";
+	char pf22file[200] = "pf10.bin";
 
 	makeDataset(vdims, Data, pf22file);
 	int CubeSize = SampleCubeSize * SampleCubeSize*SampleCubeSize;
@@ -253,7 +328,7 @@ void TestAyanGMM()
 			}
 		}
 	}
-	std::cout << currentGMMId << " ";
+	//std::cout << currentGMMId << " ";
 	std::cout << "Max: " << Max << " Min: " << Min << std::endl;
 	// Normalize Histogram data
 	vtkm::cont::ArrayHandle<vtkm::Float32> Hbins;
@@ -264,7 +339,7 @@ void TestAyanGMM()
 		vtkm::Float32 value = (vtkm::Float32)TotalBins[i] / (vtkm::Float32)CubeSize;
 		Hbins.GetPortalControl().Set(i, value);
 	}
-	std::cout << "cnt: " << gmmCnt << std::endl;
+	//std::cout << "cnt: " << gmmCnt << std::endl;
 
 	vtkm::cont::ArrayHandle < vtkm::Int32 > keys = vtkm::cont::make_ArrayHandle(gmmIds);
 	vtkm::cont::ArrayHandle < vtkm::Vec<Real, VARs> > values = vtkm::cont::make_ArrayHandle(gmmTrainData);
@@ -278,26 +353,32 @@ void TestAyanGMM()
 		vtkm::cont::ArrayPortalToIteratorEnd(values.GetPortalConstControl()),
 		gmmTrainData.begin());
 
-	std::cout << gmmTrainData.size() << " " << gmmIds.size() << std::endl;
+	//std::cout << gmmTrainData.size() << " " << gmmIds.size() << std::endl;
 	/////////////////////// Step 3: train  /////////////////////////////////////////////////
 	// Run Kmean++ first to get better initialization for GMM training
-	//vtkm::cont::Timer<> gmmKmeanTimer;
-	//vtkm::cont::Timer<> kmeanTimer;
+	vtkm::cont::Timer kmeanTimer;
+	kmeanTimer.Start();
+	std::cout << "ks" << std::endl;
 
 	std::vector< vtkm::Int32 > clusterLabel;
 
 	vtkm::worklet::KMeanPP<nGauComps, VARs, Real> kmeanpp;
 	kmeanpp.Run(gmmTrainData, gmmIds, gmmCnt, maxKMeanppIterations, clusterLabel);
 	std::cout << "Kmean++" << std::endl;
+	kmeanTimer.Stop();
 
-	//std::cout<< "KMean++ Time: " << kmeanTimer.GetElapsedTime() << std::endl << std::endl << std::endl;
+	std::cout<< "KMean++ Time: " << kmeanTimer.GetElapsedTime() << std::endl << std::endl;
 
 	//// GMM Training EM
 	srand(time(NULL));
-	//vtkm::cont::Timer<> gmmTimer;
+	vtkm::cont::Timer gmmTimer;
+	gmmTimer.Start();
 	vtkm::worklet::GMMTraining<nGauComps, VARs, Real> em;
 	em.Run(gmmTrainData, gmmIds, gmmCnt, maxEmIterations, clusterLabel, 1, 2, 0.001, 0.000001);
 	std::cout << "EM finish" << std::endl;
+	gmmTimer.Stop();
+
+	std::cout << "GMM Time: " << gmmTimer.GetElapsedTime() << std::endl << std::endl;
 	//6th para: 0: random init (clusterLabel useless), 1: use kmean++ init
 	//7th para: screen output: 0: no output, 1:only iteration output, 2: output details
 	//8th para: em stop threshold
@@ -315,12 +396,13 @@ void TestAyanGMM()
 	//// Load GMM from a file, programmer has to know the nGauComps, VARs, Real used to train the GMM
 	vtkm::worklet::GMMTraining<nGauComps, VARs, Real> rsp;
 	rsp.LoadGMMsFile(gmmFilePath);
-	std::cout << "check" << std::endl;
+	//std::cout << "check" << std::endl;
 
 	//////////////////////// Step 6 : reconstruction /////////////////////////////////
-	vtkm::cont::ArrayHandle<vtkm::Float32> ValueHandle;
-	ValueHandle.Allocate(BlockSize);
-	int blkOrder = 0;
+	//vtkm::cont::ArrayHandle<vtkm::Float32> ValueHandle;
+	//ValueHandle.Allocate(BlockSize);
+	//int blkOrder = 0;
+	/*
 	for (int a = 0; a < SampleBlockSize / SampleCubeSize; ++a)
 	{
 		for (int b = 0; b < SampleBlockSize / SampleCubeSize; ++b)
@@ -378,12 +460,62 @@ void TestAyanGMM()
 			}
 		}
 	}
+	*/
 
-	std::cout << "check" << std::endl;
-	std::cout << ValueHandle.GetPortalConstControl().GetNumberOfValues() << std::endl;
-	std::vector<vtkm::Float32> reSampleData(ValueHandle.GetPortalConstControl().GetNumberOfValues());
-	std::copy(vtkm::cont::ArrayPortalToIteratorBegin(ValueHandle.GetPortalConstControl()),
-		vtkm::cont::ArrayPortalToIteratorEnd(ValueHandle.GetPortalConstControl()),
+	//prepare sampling output
+	std::vector<vtkm::Id> rawx, rawy, rawz;
+	std::vector<vtkm::Id> blockCnts, blockOrders;
+	for (int i = 0; i < BlockSize; i++) {
+		int x, y, z;
+		Index1DTo3D(i, x, y, z, SampleBlockSize);
+
+		int blockCnt = Index3DTo1D(x / SampleCubeSize, y / SampleCubeSize, z / SampleCubeSize, SampleBlockSize/SampleCubeSize);
+		blockCnts.push_back(blockCnt);
+
+		int blockOrder = Index3DTo1D(z / SampleCubeSize, y / SampleCubeSize, x / SampleCubeSize, SampleBlockSize / SampleCubeSize);
+		blockOrders.push_back(blockOrder);
+
+		rawx.push_back(x);
+		rawy.push_back(y);
+		rawz.push_back(z);
+	}
+	vtkm::cont::ArrayHandle<vtkm::Id> rawX = vtkm::cont::make_ArrayHandle(rawx);
+	vtkm::cont::ArrayHandle<vtkm::Id> rawY = vtkm::cont::make_ArrayHandle(rawy);
+	vtkm::cont::ArrayHandle<vtkm::Id> rawZ = vtkm::cont::make_ArrayHandle(rawz);
+
+	vtkm::cont::ArrayHandle<vtkm::Id> blkCntIndex = vtkm::cont::make_ArrayHandle(blockCnts);
+	vtkm::cont::ArrayHandle<vtkm::Id> blkOrIndex = vtkm::cont::make_ArrayHandle(blockOrders);
+
+
+	//Convert to PointND
+	vtkm::cont::ArrayHandle<vtkm::Vec<vtkm::Float32, 3>> xyz;
+	vtkm::worklet::DispatcherMapField<Convert2PointND> convert2PointNDDispatcher(Convert2PointND{});
+	convert2PointNDDispatcher.Invoke(rawX, rawY, rawZ, xyz);
+
+	//Generate Random Number in CPU
+	std::default_random_engine rng;
+	std::uniform_real_distribution<vtkm::Float32> dr(0.0f, 1.0f);
+	std::vector<vtkm::Float32> uniformRandom;
+	for (int i = 0; i < rawX.GetNumberOfValues(); i++) {
+		uniformRandom.push_back(dr(rng));
+	}
+	vtkm::cont::ArrayHandle<vtkm::Float32> uniformRandomHandle = vtkm::cont::make_ArrayHandle(uniformRandom);
+
+	//Call worklet to sample from histograms
+	vtkm::cont::ArrayHandle<vtkm::Float32> samples;
+	samples.Allocate(BlockSize);
+
+	vtkm::cont::Timer resampleTimer;
+	vtkm::worklet::DispatcherMapField<Sampling> samplingDispatcher(Sampling{});
+	resampleTimer.Start();
+	samplingDispatcher.Invoke(xyz, blkCntIndex, blkOrIndex, uniformRandomHandle, samples, Hbins, rsp.gmmsHandle);
+	std::cout << "Data Reconstruction Time: " << resampleTimer.GetElapsedTime() << std::endl;
+
+	//std::cout << "check" << std::endl;
+	//std::cout << ValueHandle.GetPortalConstControl().GetNumberOfValues() << std::endl;
+	std::vector<vtkm::Float32> reSampleData(samples.GetPortalConstControl().GetNumberOfValues());
+	std::copy(vtkm::cont::ArrayPortalToIteratorBegin(samples.GetPortalConstControl()),
+		vtkm::cont::ArrayPortalToIteratorEnd(samples.GetPortalConstControl()),
 		reSampleData.begin());
 
 	std::ofstream ofout(filePrefixPath + "reSampleData.bin", std::ios::out | std::ios::binary);
@@ -395,5 +527,8 @@ void TestAyanGMM()
 
 int main(int argc, char* argv[])
 {
+	//vtkm::cont::DeviceAdapterTagSerial serialTag;
+	//vtkm::cont::RuntimeDeviceTracker::ForceDevice(serialTag);
+	//vtkm::cont::RuntimeDeviceTracker.GetGlobalRuntimeDeviceTracker().ForceDevice(vtkm::cont::DeviceAdapterTagSerial{});
     return vtkm::cont::testing::Testing::Run(TestAyanGMM, argc, argv);
 }
