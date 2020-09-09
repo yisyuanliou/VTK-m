@@ -59,10 +59,10 @@ set(unit_tests
   #UnitTestWorkletReduceByKey.cxx
   #UnitTestVertexClustering.cxx
   #UnitTestWaveletCompressor.cxx
-
+  spatialGMM.cxx
   #UnitTestHistModelAndReconstruction.cxx
-  UnitTestGMMTraining.cxx
-  UnitTestGMMReconstruction.cxx
+  #UnitTestGMMTraining.cxx
+  #UnitTestGMMReconstruction.cxx
   #UnitTestHeatEquation.cxx
  )
 
