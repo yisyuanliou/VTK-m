@@ -379,7 +379,7 @@ void TestAyanGMM()
 	vtkm::cont::Timer gmmTimer;
 	gmmTimer.Start();
 	vtkm::worklet::GMMTraining<nGauComps, VARs, Real> em;
-	em.Run(gmmTrainData, gmmIds, gmmCnt, maxEmIterations, clusterLabel, 0, 2, 0.001, 0.000001);
+	em.Run(gmmTrainData, gmmIds, gmmCnt, maxEmIterations, clusterLabel, 1, 2, 0.001, 0.000001);
 	std::cout << "EM finish" << std::endl;
 	gmmTimer.Stop();
 
