@@ -80,9 +80,9 @@ public:
 		float postProbSum = 0.0f;
 		for (int k = 0; k < numberOfBins; k++) {
 			if (BinsToGMMId[stIdx*numberOfBins + k] != -1) {
-				//std::cout << "d " << BinsToGMMId[stIdx*numberOfBins + k] << std::endl;
+				//std::cout << stIdx << " d " << BinsToGMMId[stIdx*numberOfBins + k] << std::endl;
 				vtkm::Float32 f = freqInPortal.Get(OrIdx*numberOfBins + k);
-				//std::cout << "f " << f << std::endl;
+				//std::cout << OrIdx << " f " << f << std::endl;
 				vtkm::Float32 Rprob = f * gmmInPortal.Get(BinsToGMMId[stIdx*numberOfBins + k]).getProbability(xyz);
 				//std::cout << "Rp " << Rprob << std::endl;
 				postProb[k] = Rprob;
@@ -143,7 +143,7 @@ void Index1DTo3D( int idx, int& x, int& y, int& z , const int Size1, const int S
 
 int Index3DTo1D( int x, int y, int z , int size1, int size2)
 {
-    return z*size1*size2 + y*size2 + x;
+    return z*size1*size2 + y*size1 + x;
 }
 
 
@@ -396,6 +396,7 @@ void TestAyanGMM()
 	strcat(gmmFilePath, "gmm.bin");
 	em.WriteGMMsFile(gmmFilePath); ////  Save GMM to a file
 
+	//char gmmFilePath[1000]="gmm.bin";
 	//////////////////////// Step 5 : load gmms from file /////////////////////////////////
 	//// Load GMM from a file, programmer has to know the nGauComps, VARs, Real used to train the GMM
 	vtkm::worklet::GMMTraining<nGauComps, VARs, Real> rsp;
