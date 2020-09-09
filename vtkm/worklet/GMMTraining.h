@@ -586,7 +586,6 @@ public:
 		vtkm::cont::Algorithm::ReduceByKey(gmmIdsHandle, countingHandle, keyOut, begGmmIdxInData, vtkm::Minimum());
         //PrintArray(begGmmIdxInData);
     }
-	std::cout << "test2" << std::endl;
     // Compute number of train data in each GMM
     vtkm::cont::ArrayHandle<vtkm::Int32> numDataInGMM;
     {
@@ -597,7 +596,7 @@ public:
 		vtkm::cont::Algorithm::ReduceByKey(gmmIdsHandle, onesHandle, keyOut, numDataInGMM, vtkm::Add());
         //PrintArray(numDataInGMM);
     }
-	std::cout << "test3" << std::endl;
+	
     // EM interations
     vtkm::cont::ArrayHandle<DType> current_log_prob_norm;
     vtkm::cont::ArrayHandleConstant<DType> nansConstHandle(NAN, numGmms);
@@ -617,7 +616,6 @@ public:
     vtkm::cont::ArrayHandle< vtkm::Vec<vtkm::Int32, 4> > covUpdateIndicator;
     vtkm::cont::ArrayHandle<vtkm::Int32> nonstopFlag; 
 
-	std::cout << "test4" << std::endl;
     //gmmTrainSample snc and mean cov mat indicator computation
     vtkm::worklet::DispatcherMapField<CombineTwoArrays> combineTwoArraysDispatcher( CombineTwoArrays{} );
     combineTwoArraysDispatcher.Invoke( begGmmIdxInData, numDataInGMM, gmmTrainSampleSnc);
@@ -627,7 +625,6 @@ public:
     computeMeanIndicatorDispatcher.Invoke(vtkm::cont::ArrayHandleCounting<vtkm::Int32>(0, 1, numGmms*GMs*VARs), 
                                             meanUpdateIndicator );
 
-	std::cout << "test5" << std::endl;
     //Compute idx to row and col in a upper triangle matrix
     vtkm::Int32 matTriangleSize = ((1+VARs)*VARs)/2;
     std::vector<vtkm::Int32> idx2Row;
@@ -644,14 +641,11 @@ public:
     vtkm::worklet::DispatcherMapField<ComputeCovMatIndicator> computeCovMatIndicatorDispatcher( computeCovMatIndicator );
     computeCovMatIndicatorDispatcher.Invoke(vtkm::cont::ArrayHandleCounting<vtkm::Int32>(0, 1, numGmms*GMs*matTriangleSize ), covUpdateIndicator, idx2RowHandle, idx2ColHandle ); //Only Upper triangle
 
-	std::cout << "test6" << std::endl;
     //init nonstop flag (all non-stop in the begining)
     vtkm::cont::ArrayHandleConstant<vtkm::Int32> initNonstopFlagConstHandle(1, numGmms);
 	vtkm::cont::Algorithm::Copy( initNonstopFlagConstHandle, nonstopFlag );
 
-	std::cout << "test7" << std::endl;
     if( initState == 0 ){
-		std::cout << "test8-1" << std::endl;
         //Initialize parameter (random the resposibility matrix)
         for( int i=0; i<nTrainData; i++ ){ //Serial part
             vtkm::Vec<DType, GMs> resTmp;
@@ -675,7 +669,6 @@ public:
             resposibilities.GetPortalControl().Set(i, resTmp);
         }
     }
-	std::cout << "test9" << std::endl;
     ParameterEstimation(numGmms, gmmIdsHandle, resposibilities, keyOut_weights, weights, nonstopFlag,
                             gmmTrainSampleSnc, meanUpdateIndicator, covUpdateIndicator, newMeans, newCovarianceMats,
                             trainDataHandle, idx2RowHandle, idx2ColHandle, matTriangleSize, 
@@ -684,8 +677,8 @@ public:
     // Main EM interations
     for( vtkm::Int32 iter = 0; iter<maxInterations; iter++ )
     {   
-		std::cout << "EM: " << iter << std::endl;
-        if( verbose >=1 ) std::cout << "Iterations: " << iter << std::endl;
+		//std::cout << "EM: " << iter << std::endl;
+        //if( verbose >=1 ) std::cout << "Iterations: " << iter << std::endl;
 		vtkm::cont::Algorithm::Copy( current_log_prob_norm, prev_log_prob_norm );
         vtkm::cont::ArrayHandleConstant<DType> zerosConstHandle(0, numGmms);
 		vtkm::cont::Algorithm::Copy( zerosConstHandle, current_log_prob_norm );
@@ -696,7 +689,7 @@ public:
         // Check Stop Condition
 		vtkm::cont::Algorithm::ReduceByKey(gmmIdsHandle, log_prob_norms, keyOut_current_log_prob_norm, current_log_prob_norm, vtkm::Add());
         vtkm::worklet::DispatcherMapField<DivideArrayByArray> divideArrayByArrayDispatcher( DivideArrayByArray{} );
-        printf("%f\n", current_log_prob_norm.GetPortalControl().Get(0) );// if I do not print, GPU on OSC is broken (i do not know why)
+        //printf("%f\n", current_log_prob_norm.GetPortalControl().Get(0) );// if I do not print, GPU on OSC is broken (i do not know why)
         divideArrayByArrayDispatcher.Invoke(current_log_prob_norm, numDataInGMM, current_log_prob_norm);
         if( iter != 0 ){ 
             //if it is first iternation, cannot estimate likelihood change
@@ -735,11 +728,9 @@ public:
     {
         //Update weight
         vtkm::cont::Timer UpdateWeightTimer;
-		std::cout << "test1 " << verbose << std::endl;
 		vtkm::cont::Algorithm::ReduceByKey(gmmIdsHandle, resposibilities, keyOut_weights, weights, vtkm::Add() );
         vtkm::worklet::DispatcherMapField<UpdateWeight> updateWeightDispatcher( UpdateWeight{} );
         updateWeightDispatcher.Invoke(weights, vtkm::cont::ArrayHandleCounting<vtkm::Int32>(0, 1, numGmms), nonstopFlag, gmmsHandle);
-		std::cout << "test2" << std::endl;
 		//if( verbose >=2 )std::cout << "UpdateWeightTime: " << UpdateWeightTimer.GetElapsedTime() << std::endl;
 
         //Update mean
@@ -748,14 +739,14 @@ public:
         computeUpdatedMeanDispatcher.Invoke(meanUpdateIndicator, newMeans,
                                             trainDataHandle, gmmTrainSampleSnc, weights,
                                             resposibilities, nonstopFlag);
-		std::cout << "test3" << std::endl;
+
         vtkm::worklet::DispatcherMapField<UpdateMeanOneShot> updateMeanOneShotDispatcher( UpdateMeanOneShot{} );
         updateMeanOneShotDispatcher.Invoke(vtkm::cont::ArrayHandleCounting<vtkm::Int32>(0, 1, numGmms),
                                                 newMeans,
                                                 nonstopFlag,
                                                 gmmsHandle );
         //if( verbose >=2 )std::cout << "UpdateMeanTime: " << UpdateMeanTimer.GetElapsedTime() << std::endl;
-		std::cout << "test4" << std::endl;
+
         //flat cov and update cov
         vtkm::cont::Timer FlatCovMatComputationTimer;
         ComputeUpdatedCovMatrix computeUpdatedCovMatrix(minCovDiag); 

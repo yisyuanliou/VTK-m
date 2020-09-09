@@ -324,7 +324,6 @@ public:
         vtkm::cont::ArrayHandle<vtkm::Int32> keyOut;
 		vtkm::cont::Algorithm::ReduceByKey(setIdsHandle, countingHandle, keyOut, begSetIdxInData, vtkm::Minimum());
     }
-	std::cout << "1" << std::endl;
     // Compute number of train data in each Set
     vtkm::cont::ArrayHandle<vtkm::Int32> numDataInSet;
     {
@@ -334,12 +333,12 @@ public:
         vtkm::cont::ArrayHandle<vtkm::Int32> keyOut;
 		vtkm::cont::Algorithm::ReduceByKey(setIdsHandle, onesHandle, keyOut, numDataInSet, vtkm::Add());
     }
-	std::cout << "1" << std::endl;
+
     // random number for cluster center initial selection
     std::vector<DType> uniformRandom;
     for( int i=0; i<CLUs*numSets ; i++ ) uniformRandom.push_back(rand()/(float)RAND_MAX);
     vtkm::cont::ArrayHandle<DType> uniformRandomHandle = vtkm::cont::make_ArrayHandle(uniformRandom);
-	std::cout << "1" << std::endl;
+
     //////////////////  K-mean++ initialization ////////////
     vtkm::cont::ArrayHandle< DType > sumWeights;
     vtkm::cont::ArrayHandle< vtkm::Int32 > keyOut;
@@ -348,19 +347,17 @@ public:
         ComputeNNCenterDistance computeNNCenterDistance( c );
         vtkm::worklet::DispatcherMapField<ComputeNNCenterDistance> computeNNCenterDistanceDispatcher( computeNNCenterDistance );
         computeNNCenterDistanceDispatcher.Invoke( trainDataHandle, setIdsHandle, nnSqDist , centers);
-
 		vtkm::cont::Algorithm::ReduceByKey(setIdsHandle, nnSqDist, keyOut, sumWeights, vtkm::Add());
         //normalize weight by sum of weights
         vtkm::worklet::DispatcherMapField<NormalizedWeight> nwDispatcher( NormalizedWeight{} );
         nwDispatcher.Invoke(nnSqDist, setIdsHandle, nnSqDist, sumWeights);
-
         SampleNewCenter sampleNewCenter( c );
         vtkm::worklet::DispatcherMapField<SampleNewCenter> sampleNewCenterDispatcher( sampleNewCenter );
         sampleNewCenterDispatcher.Invoke( vtkm::cont::ArrayHandleCounting<vtkm::Int32>(0, 1, numSets),
                                           begSetIdxInData, numDataInSet,
                                           uniformRandomHandle, nnSqDist, trainDataHandle, centers);
+		
     }
-	std::cout << "1" << std::endl;
     ////////////// K-Mean Algorithm /////////////////////
     std::vector<vtkm::Int32> labels(nTrainData, -1);
     vtkm::cont::ArrayHandle<vtkm::Int32> labelsHandle = vtkm::cont::make_ArrayHandle( labels );
@@ -372,10 +369,9 @@ public:
     vtkm::cont::ArrayHandle< vtkm::Vec<DType, VARs+1> > sumOfSameClusters;
     vtkm::cont::ArrayHandle< vtkm::Int32 > numOfSampleInClusters;
 	vtkm::cont::Algorithm::ReduceByKey(setIdsHandle, changesHandle, setIdsHandleKeyOut, sumOfChangeHandle, vtkm::Add());
-	std::cout << maxIterations << "check" << std::endl;
     for( int iter=0; iter<maxIterations; iter++ )
     {
-		std::cout << iter << std::endl;
+		//std::cout << iter << std::endl;
         //vtkm::cont::Timer tAssign;
         vtkm::worklet::DispatcherMapField<AssignLabel> assignLabelDispatcher( AssignLabel{} );
         assignLabelDispatcher.Invoke( trainDataHandle, setIdsHandle, labelsHandle, labelsHandle, 
@@ -411,7 +407,6 @@ public:
         // std::cout <<  "NewMean Time:" << tNewMean.GetElapsedTime() << std::endl;
     }
 
-	std::cout << "1" << std::endl;
     //Run label assignment on trainData with original order
     vtkm::cont::ArrayHandle<vtkm::Int32> originalLabelHandle;
     originalLabelHandle.Allocate( labelsHandle.GetNumberOfValues() );
