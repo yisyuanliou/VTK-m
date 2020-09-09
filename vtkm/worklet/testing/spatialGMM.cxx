@@ -310,7 +310,7 @@ void TestAyanGMM()
 							int y = d1 - b * SampleCubeSize;
 							int z = d2 - c * SampleCubeSize;
 							int bkIndex = Index3DTo1D(x, y, z, SampleCubeSize, SampleCubeSize);
-							int blkCnt = Index3DTo1D(a, b, c, vdims[2] / SampleCubeSize, vdims[1] / SampleCubeSize);
+							int blkCnt = Index3DTo1D(a, b, c, vdims[0] / SampleCubeSize, vdims[1] / SampleCubeSize);
 							//int gtIndex = Index3DTo1D(d0, d1, d2, vdims[0], vdims[1]);
 							//blkCnts[gtIndex] = blkCnt;
 							int binsId = findGMMId(numberOfBins, fieldMinValue, delta, blockData[bkIndex], blkCnt);
@@ -332,7 +332,7 @@ void TestAyanGMM()
 			}
 		}
 	}
-	std::cout << currentGMMId << " ";
+	std::cout << currentGMMId << " "<<gmmCnt<<" ";
 	std::cout << "Max: " << Max << " Min: " << Min << std::endl;
 	// Normalize Histogram data
 	vtkm::cont::ArrayHandle<vtkm::Float32> Hbins;
@@ -367,8 +367,8 @@ void TestAyanGMM()
 
 	std::vector< vtkm::Int32 > clusterLabel;
 
-	vtkm::worklet::KMeanPP<nGauComps, VARs, Real> kmeanpp;
-	kmeanpp.Run(gmmTrainData, gmmIds, gmmCnt, maxKMeanppIterations, clusterLabel);
+	//vtkm::worklet::KMeanPP<nGauComps, VARs, Real> kmeanpp;
+	//kmeanpp.Run(gmmTrainData, gmmIds, gmmCnt, maxKMeanppIterations, clusterLabel);
 	std::cout << "Kmean++" << std::endl;
 	kmeanTimer.Stop();
 
@@ -379,7 +379,7 @@ void TestAyanGMM()
 	vtkm::cont::Timer gmmTimer;
 	gmmTimer.Start();
 	vtkm::worklet::GMMTraining<nGauComps, VARs, Real> em;
-	em.Run(gmmTrainData, gmmIds, gmmCnt, maxEmIterations, clusterLabel, 1, 2, 0.001, 0.000001);
+	em.Run(gmmTrainData, gmmIds, gmmCnt, maxEmIterations, clusterLabel, 0, 2, 0.001, 0.000001);
 	std::cout << "EM finish" << std::endl;
 	gmmTimer.Stop();
 
@@ -410,10 +410,10 @@ void TestAyanGMM()
 		int x, y, z;
 		Index1DTo3D(i, x, y, z, vdims[0], vdims[1]);
 
-		int blockCnt = Index3DTo1D(x / SampleCubeSize, y / SampleCubeSize, z / SampleCubeSize, vdims[2]/SampleCubeSize, vdims[1] / SampleCubeSize);
+		int blockCnt = Index3DTo1D(x / SampleCubeSize, y / SampleCubeSize, z / SampleCubeSize, vdims[0]/SampleCubeSize, vdims[1] / SampleCubeSize);
 		blockCnts.push_back(blockCnt);
 
-		int blockOrder = Index3DTo1D(z / SampleCubeSize, y / SampleCubeSize, x / SampleCubeSize, vdims[0] / SampleCubeSize, vdims[1] / SampleCubeSize);
+		int blockOrder = Index3DTo1D(z / SampleCubeSize, y / SampleCubeSize, x / SampleCubeSize, vdims[2] / SampleCubeSize, vdims[1] / SampleCubeSize);
 		blockOrders.push_back(blockOrder);
 
 		rawx.push_back(x);
