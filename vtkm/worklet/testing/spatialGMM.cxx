@@ -47,13 +47,13 @@ typedef vtkm::Float64 Real;
 const int VARs = 3;
 const int nGauComps = 10;
 const int SampleBlockSize = 48;
-const int SampleCubeSize = 25;
+const int SampleCubeSize = 20;
 const int SampleSphereRadius = 100;
 const int SampleSphereBand = 5;
 const int maxEmIterations = 100;
 const int maxKMeanppIterations = 100;
 const int vdims[3] = { 500, 500, 100 };
-const vtkm::Id numberOfBins = 10;
+const vtkm::Id numberOfBins = 128;
 const vtkm::Float32 fieldMinValue = -4900;
 const vtkm::Float32 fieldMaxValue = 2400;
 //vtkm::Range range;
@@ -367,8 +367,8 @@ void TestAyanGMM()
 
 	std::vector< vtkm::Int32 > clusterLabel;
 
-	//vtkm::worklet::KMeanPP<nGauComps, VARs, Real> kmeanpp;
-	//kmeanpp.Run(gmmTrainData, gmmIds, gmmCnt, maxKMeanppIterations, clusterLabel);
+	vtkm::worklet::KMeanPP<nGauComps, VARs, Real> kmeanpp;
+	kmeanpp.Run(gmmTrainData, gmmIds, gmmCnt, maxKMeanppIterations, clusterLabel);
 	std::cout << "Kmean++" << std::endl;
 	kmeanTimer.Stop();
 
