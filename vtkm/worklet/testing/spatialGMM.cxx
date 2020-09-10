@@ -59,7 +59,7 @@ const vtkm::Float32 fieldMaxValue = 2400;
 //vtkm::Range range;
 vtkm::Float32 delta;
 int currentGMMId = -1;
-int BinsToGMMId[28000] = {};
+int BinsToGMMId[500000] = {};
 
 class Sampling : public vtkm::worklet::WorkletMapField
 {
